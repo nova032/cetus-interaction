@@ -1,0 +1,12 @@
+export const packageId = '0x841a3e0cb99fef0205fa82edb0870cc9b073fbe1b125281a0593723895b35706';
+export const publisher = '';
+export const CoinMetadataCity = '0x6533d82b043177c0094ea48401d628bebe2e6dec6bd583558f49686d6dc8bafe'; 
+export const CoinMetadataVillage = '0xfd71c275536154bac3872ee25b6361548fd4c942c82eb07e3dd7eff67fb5e17e';
+export const UpgradeCap = '0x23e7dcbade2bed9ebc11cc05866ab894a5fcbd81cb7d229a2f4bb1205a8c3670';
+export const COIN_A_TYPE = '';
+export const COIN_B_TYPE = '';
+export const CoinCityRegistry = '0xe32d60a88135c045c94e1c90b254c61f952bc1c3edccd5b991dfdb20035a1614';
+export const CoinVillageRegistry = '0x532a8f8367e926bded6f603f7d0af472e4c6ed469bc52002ea379a846a7b06a0';
+export const GlobalConfig = '0x9774e359588ead122af1c7e7f64e14ade261cfeecdb5d0eb4a5b3b4c8ab8bd3e';
+export const Pools = '0x50eb61dd5928cec5ea04711a2e9b72e5237e79e9fbcd2ce3d5469dc8708e0ee2';
+export const ReceiptTokenTreasuryCap = '';
