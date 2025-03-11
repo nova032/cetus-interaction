@@ -3,7 +3,7 @@
 module vcetus::v_swap;
 
 use sui::{
-    coin::{Coin, CoinMetadata},
+    coin::{Self, Coin, CoinMetadata},
     clock::{Clock},
 };
 use vcetus::{
@@ -15,14 +15,35 @@ use cetus_clmm::{
     config::GlobalConfig,
     factory::Pools as CetusPools,
     position::{Position},
+    partner::{Partner},
+    pool::{Self, Pool, FlashSwapReceipt},
+    tick_math,
 };
+
+use std::type_name::{Self, TypeName};
+use sui::balance;
+use sui::event::emit;
 
 const VILLAGE_DEX_ALLOCATION: u64 = 150_000_000_000_000;
 const CITY_DEX_ALLOCATION: u64 = 100_000_000_000_000; 
 
+const DEFAULT_PARTNER_ID: address =
+    @0x8e0b7668a79592f70fbfb1ae0aebaf9e2019a7049783b9a4b6fe7c6ae038b528;
+
 public struct PositionHolder<phantom T> has key {
     id: UID,
     position: Position
+}
+
+public struct CetusSwapEvent has copy, store, drop {
+    pool: ID,
+    amount_in: u64,
+    amount_out: u64,
+    a2b: bool,
+    by_amount_in: bool,
+    partner_id: ID,
+    coin_a: TypeName,
+    coin_b: TypeName,
 }
 
 #[allow(lint(self_transfer))]
@@ -120,3 +141,240 @@ public fun create_cetus_pool_ab<CoinTypeA, CoinTypeB>(
     };
     transfer::share_object(position_holder);
 }
+
+public fun swap_a2b<CoinTypeA, CoinTypeB>(
+    config: &GlobalConfig,
+    pool: &mut Pool<CoinTypeA, CoinTypeB>,
+    partner: &mut Partner,
+    coin_a: Coin<CoinTypeA>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<CoinTypeB> {
+    let amount_in = coin::value(&coin_a);
+    let (receive_a, receive_b, flash_receipt, pay_amount) = flash_swap<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        partner,
+        amount_in,
+        true,
+        true,
+        tick_math::min_sqrt_price(),
+        clock,
+        ctx,
+    );
+
+    assert!(pay_amount == amount_in, 0);
+    let remainer_a = repay_flash_swap_a2b<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        partner,
+        coin_a,
+        flash_receipt,
+        ctx,
+    );
+    transfer_or_destroy_coin(remainer_a, ctx);
+    coin::destroy_zero(receive_a);
+    receive_b
+}
+
+public fun swap_b2a<CoinTypeA, CoinTypeB>(
+    config: &GlobalConfig,
+    pool: &mut Pool<CoinTypeA, CoinTypeB>,
+    partner: &mut Partner,
+    coin_b: Coin<CoinTypeB>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<CoinTypeA> {
+    let amount_in = coin::value(&coin_b);
+    let (receive_a, receive_b, flash_receipt, pay_amount) = flash_swap<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        partner,
+        amount_in,
+        false,
+        true,
+        tick_math::max_sqrt_price(),
+        clock,
+        ctx,
+    );
+
+    assert!(pay_amount == amount_in, 0);
+    coin::destroy_zero(receive_b);
+
+    let remainer_b = repay_flash_swap_b2a<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        partner,
+        coin_b,
+        flash_receipt,
+        ctx,
+    );
+    transfer_or_destroy_coin(remainer_b, ctx);
+    receive_a
+}
+
+public fun repay_flash_swap_a2b<CoinTypeA, CoinTypeB>(
+    config: &GlobalConfig,
+    pool: &mut Pool<CoinTypeA, CoinTypeB>,
+    partner: &mut Partner,
+    coin_a: Coin<CoinTypeA>,
+    receipt: FlashSwapReceipt<CoinTypeA, CoinTypeB>,
+    ctx: &mut TxContext,
+): Coin<CoinTypeA> {
+    let coin_b = coin::zero<CoinTypeB>(ctx);
+    let (repaid_coin_a, repaid_coin_b) = repay_flash_swap<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        partner,
+        true,
+        coin_a,
+        coin_b,
+        receipt,
+        ctx,
+    );
+    transfer_or_destroy_coin<CoinTypeB>(repaid_coin_b, ctx);
+    (repaid_coin_a)
+}
+
+public fun repay_flash_swap_b2a<CoinTypeA, CoinTypeB>(
+    config: &GlobalConfig,
+    pool: &mut Pool<CoinTypeA, CoinTypeB>,
+    partner: &mut Partner,
+    coin_b: Coin<CoinTypeB>,
+    receipt: FlashSwapReceipt<CoinTypeA, CoinTypeB>,
+    ctx: &mut TxContext,
+): Coin<CoinTypeB> {
+    let coin_a = coin::zero<CoinTypeA>(ctx);
+    let (repaid_coin_a, repaid_coin_b) = repay_flash_swap<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        partner,
+        false,
+        coin_a,
+        coin_b,
+        receipt,
+        ctx,
+    );
+
+    transfer_or_destroy_coin<CoinTypeA>(repaid_coin_a, ctx);
+    (repaid_coin_b)
+}
+
+
+fun flash_swap<CoinTypeA, CoinTypeB>(
+    config: &GlobalConfig,
+    pool: &mut Pool<CoinTypeA, CoinTypeB>,
+    partner: &Partner,
+    amount: u64,
+    a2b: bool,
+    by_amount_in: bool,
+    sqrt_price_limit: u128,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<CoinTypeA>, Coin<CoinTypeB>, FlashSwapReceipt<CoinTypeA, CoinTypeB>, u64) {
+    let (receive_a, receive_b, flash_receipt) = if (
+        object::id_address(partner) == DEFAULT_PARTNER_ID
+    ) {
+        pool::flash_swap<CoinTypeA, CoinTypeB>(
+            config,
+            pool,
+            a2b,
+            by_amount_in,
+            amount,
+            sqrt_price_limit,
+            clock,
+        )
+    } else {
+        pool::flash_swap_with_partner<CoinTypeA, CoinTypeB>(
+            config,
+            pool,
+            partner,
+            a2b,
+            by_amount_in,
+            amount,
+            sqrt_price_limit,
+            clock,
+        )
+    };
+
+    let receive_a_amount = balance::value(&receive_a);
+    let receive_b_amount = balance::value(&receive_b);
+    let repay_amount = pool::swap_pay_amount(&flash_receipt);
+
+    let amount_in = if (by_amount_in) {
+        amount
+    } else {
+        repay_amount
+    };
+    let amount_out = receive_a_amount + receive_b_amount;
+
+    emit(CetusSwapEvent {
+        pool: object::id(pool),
+        amount_in,
+        amount_out,
+        a2b,
+        by_amount_in,
+        partner_id: object::id(partner),
+        coin_a: type_name::get<CoinTypeA>(),
+        coin_b: type_name::get<CoinTypeB>(),
+    });
+
+    let coin_a = coin::from_balance(receive_a, ctx);
+    let coin_b = coin::from_balance(receive_b, ctx);
+
+    (coin_a, coin_b, flash_receipt, repay_amount)
+}
+
+fun repay_flash_swap<CoinTypeA, CoinTypeB>(
+    config: &GlobalConfig,
+    pool: &mut Pool<CoinTypeA, CoinTypeB>,
+    partner: &mut Partner,
+    a2b: bool,
+    coin_a: Coin<CoinTypeA>,
+    coin_b: Coin<CoinTypeB>,
+    receipt: FlashSwapReceipt<CoinTypeA, CoinTypeB>,
+    ctx: &mut TxContext,
+): (Coin<CoinTypeA>, Coin<CoinTypeB>) {
+    let repay_amount = pool::swap_pay_amount(&receipt);
+
+    let mut coin_a = coin_a;
+    let mut coin_b = coin_b;
+    let (pay_coin_a, pay_coin_b) = if (a2b) {
+        (coin_a.split(repay_amount, ctx).into_balance(), balance::zero<CoinTypeB>())
+    } else {
+        (balance::zero<CoinTypeA>(), coin_b.split(repay_amount, ctx).into_balance())
+    };
+
+    if (object::id_address(partner) == DEFAULT_PARTNER_ID) {
+        pool::repay_flash_swap<CoinTypeA, CoinTypeB>(
+            config,
+            pool,
+            pay_coin_a,
+            pay_coin_b,
+            receipt,
+        );
+    } else {
+        pool::repay_flash_swap_with_partner<CoinTypeA, CoinTypeB>(
+            config,
+            pool,
+            partner,
+            pay_coin_a,
+            pay_coin_b,
+            receipt,
+        );
+    };
+    (coin_a, coin_b)
+}
+
+
+  #[allow(lint(self_transfer))]
+    public fun transfer_or_destroy_coin<CoinType>(
+        coin: Coin<CoinType>,
+        ctx: &TxContext
+    ) {
+        if (coin::value(&coin) > 0) {
+            transfer::public_transfer(coin, tx_context::sender(ctx))
+        } else {
+            coin::destroy_zero(coin)
+        }
+    }
