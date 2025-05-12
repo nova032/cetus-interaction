@@ -24,8 +24,8 @@ use std::type_name::{Self, TypeName};
 use sui::balance;
 use sui::event::emit;
 
-const VILLAGE_DEX_ALLOCATION: u64 = 150_000_000_000_000;
-const CITY_DEX_ALLOCATION: u64 = 100_000_000_000_000; 
+const VILLAGE_DEX_ALLOCATION: u64 = 1_000_000_000_000_000;
+const CITY_DEX_ALLOCATION: u64 = 30_000_000_000_000; 
 
 const DEFAULT_PARTNER_ID: address =
     @0x8e0b7668a79592f70fbfb1ae0aebaf9e2019a7049783b9a4b6fe7c6ae038b528;
@@ -66,19 +66,21 @@ public fun create_cetus_pool_v_s(
     let tick_spacing = 60; 
     let (tick_lower, tick_upper) = pool_creator::full_range_tick_range(tick_spacing);
 
-    let city_amount =  (city_coin.value() as u128); 
+    let city_amount =  (CITY_DEX_ALLOCATION as u128); 
     let village_amount = (VILLAGE_DEX_ALLOCATION as u128); 
 
     // calculate price with higher precision
     // price = (village_amount * (1u128 << 64)) / city_amount; 
 
-    let initial_price = (city_amount * (1u128 << 64)) / village_amount; 
+  //  let initial_price = (city_amount * (1u128 << 64)) / village_amount; 
+
 
     let (position, remaining_coin_v, remaining_coin_c) = pool_creator::create_pool_v2<VILLAGE, CITY>(
         config, 
         cetus_pools, 
         tick_spacing,
-        initial_price, 
+        3195071000000000000, 
+       // 3197336011907818496,
         std::string::utf8(b"VILLAGE/SUI Pool"),
         tick_lower, 
         tick_upper,
@@ -86,8 +88,8 @@ public fun create_cetus_pool_v_s(
         city_coin,
         metadata_village, // village
         metadata_city, // city
-        true, 
-        clock, 
+        false, 
+        clock,
         ctx
     );
 

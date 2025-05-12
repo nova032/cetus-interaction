@@ -1,4 +1,4 @@
-import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
+import { Transaction } from '@mysten/sui/transactions';
 import * as dotenv from 'dotenv';
 import getExecStuff from '../utils/execStuff';
 import { CoinCityRegistry, CoinMetadataCity, CoinMetadataVillage, CoinVillageRegistry, GlobalConfig, packageId, Pools,} from '../utils/packageInfo';
